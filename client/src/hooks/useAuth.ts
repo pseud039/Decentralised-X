@@ -21,31 +21,39 @@ const CLIENT_URL = "http://localhost:3000";
 
 export const useAuth = () => {
   const [isWalletConnected, setIsWalletConnected] = useState(false);
-  console.log(isWalletConnected);
-
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const handleGoogleAuth = async () => {
-    const provider = await new GoogleAuthProvider();
-    provider.setCustomParameters({
-      theme: "dark",
-      prompt: "select_account",
-    });
-    if (window.ethereum && typeof window.ethereum.request !== "undefined") {
-      const [userAddress] = await window.ethereum.request({
-        method: "eth_requestAccounts",
-      });
-      setIsWalletConnected(true);
-      const address = ethers.utils.getAddress(userAddress);
-      signInWithPopup(auth, provider)
-        .then((result) => {
-          const credential = GoogleAuthProvider.credentialFromResult(result);
-          const token = credential?.accessToken;
-          const user = result.user;
-          console.log(token);
-          console.log(user);
 
-          if (token === null || !token) return;
+  const handleGoogleAuth = async () => {
+    try {
+      // First, sign in with Google
+      const provider = new GoogleAuthProvider();
+      console.log("Google Auth Provider initialized");
+      provider.setCustomParameters({
+        prompt: "select_account",
+      });
+
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      const token = credential?.accessToken;
+      const user = result.user;
+
+      if (!token) {
+        toast.error("Failed to get authentication token");
+        return;
+      }
+
+      console.log("Google sign-in successful:", user);
+
+      // After Google sign-in, request wallet connection
+      if (window.ethereum && typeof window.ethereum.request !== "undefined") {
+        try {
+          const [userAddress] = await window.ethereum.request({
+            method: "eth_requestAccounts",
+          });
+          setIsWalletConnected(true);
+          const address = ethers.utils.getAddress(userAddress);
+
           dispatch(
             setUser({
               user: {
@@ -58,15 +66,65 @@ export const useAuth = () => {
               token: token,
             })
           );
+
+          toast.success("Successfully authenticated with Google and MetaMask!");
           navigate("/home");
-        })
-        .catch((err) => {
-          const errorCode = err.code;
-          const errorMessage = err.message;
-          const email = err.customData.email;
-          const credential = GoogleAuthProvider.credentialFromError(err);
-          console.log(errorCode, errorMessage, email, credential);
-        });
+        } catch (walletError) {
+          console.error("Wallet connection failed:", walletError);
+          toast.error("Failed to connect wallet. Please try again.");
+          
+          // Still save user without wallet
+          dispatch(
+            setUser({
+              user: {
+                name: user.displayName || "User",
+                avatar:
+                  user.photoURL ||
+                  "https://cdn-icons-png.flaticon.com/128/3177/3177440.png",
+                // walletAddress: null,
+              },
+              token: token,
+            })
+          );
+          navigate("/home");
+        }
+      } else {
+        toast.warn(
+          "MetaMask is not installed. Continuing without wallet connection.",
+          {
+            position: "top-right",
+            autoClose: 5000,
+            theme: "colored",
+          }
+        );
+
+        // Save user without wallet
+        dispatch(
+          setUser({
+            user: {
+              name: user.displayName || "User",
+              avatar:
+                user.photoURL ||
+                "https://cdn-icons-png.flaticon.com/128/3177/3177440.png",
+              // walletAddress: null,
+            },
+            token: token,
+          })
+        );
+        navigate("/home");
+      }
+    } catch (err: any) {
+      console.error("Google authentication failed:", err);
+      const errorCode = err.code;
+      const errorMessage = err.message;
+
+      if (errorCode === "auth/popup-closed-by-user") {
+        toast.info("Sign-in was cancelled");
+      } else if (errorCode === "auth/network-request-failed") {
+        toast.error("Network error. Please check your connection.");
+      } else {
+        toast.error(`Authentication failed: ${errorMessage}`);
+      }
     }
   };
 
@@ -78,7 +136,7 @@ export const useAuth = () => {
         });
         setIsWalletConnected(true);
         const address = ethers.utils.getAddress(userAddress);
-        handleMetaMaskLogin(address);
+        await handleMetaMaskLogin(address);
       } else {
         toast.warn(
           "MetaMask is not installed. Please install MetaMask to sign-up successfully.",
@@ -97,6 +155,7 @@ export const useAuth = () => {
       }
     } catch (err) {
       console.error("Failed to connect MetaMask and login:", err);
+      toast.error("Failed to connect wallet. Please try again.");
     }
   };
 
@@ -142,6 +201,7 @@ export const useAuth = () => {
       return signature;
     } catch (error) {
       console.error("Failed to sign message:", error);
+      toast.error("Failed to sign message. Please try again.");
     }
   };
 
@@ -156,25 +216,26 @@ export const useAuth = () => {
         signature,
       });
       if (response.data.success) {
-        toast("Successfully authenticated with MetaMask!");
+        toast.success("Successfully authenticated with MetaMask!");
         dispatch(
           setUser({
             user: {
               name: "Anonymous",
-              address: address,
+              walletAddress: address, // Changed from 'address' to 'walletAddress' for consistency
               avatar: "https://cdn-icons-png.flaticon.com/128/10/10960.png",
             },
-            token: "jadfkklakssl",
+            token: "jadfkklakssl", // Consider using a proper token from backend
           })
         );
         setTimeout(() => {
           navigate("/home");
-        }, 3000);
+        }, 2000);
       } else {
-        alert("Authentication failed!");
+        toast.error("Authentication failed!");
       }
     } catch (error) {
       console.error("Verification failed:", error);
+      toast.error("Verification failed. Please try again.");
     }
   };
 
@@ -191,8 +252,9 @@ export const useAuth = () => {
       await verifySignature(address, message, signature);
     } catch (error) {
       console.error("Login failed:", error);
+      toast.error("MetaMask login failed. Please try again.");
     }
   };
 
-  return { handleGoogleAuth, connectWallet };
+  return { handleGoogleAuth, connectWallet, isWalletConnected };
 };
